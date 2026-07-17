@@ -10,23 +10,62 @@ import time
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
-import folium
-import geopandas as gpd
 import httpx
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FormatStrFormatter
-import numpy as np
-import pandas as pd
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from folium.raster_layers import ImageOverlay
-from scipy.spatial import cKDTree
-from shapely import intersects, points
+
+# Heavy GIS/scientific libraries are imported only when a map/data route is used.
+# This lets Uvicorn bind to Render's port quickly during deployment.
+folium = None
+gpd = None
+plt = None
+FormatStrFormatter = None
+np = None
+pd = None
+ImageOverlay = None
+cKDTree = None
+intersects = None
+points = None
+_heavy_import_lock = Lock()
+_heavy_imports_loaded = False
+
+
+def ensure_heavy_imports() -> None:
+    global folium, gpd, plt, FormatStrFormatter, np, pd
+    global ImageOverlay, cKDTree, intersects, points
+    global _heavy_imports_loaded
+
+    if _heavy_imports_loaded:
+        return
+
+    with _heavy_import_lock:
+        if _heavy_imports_loaded:
+            return
+
+        import folium as _folium
+        import geopandas as _gpd
+        import matplotlib as _matplotlib
+        _matplotlib.use("Agg")
+        import matplotlib.pyplot as _plt
+        from matplotlib.ticker import FormatStrFormatter as _FormatStrFormatter
+        import numpy as _np
+        import pandas as _pd
+        from folium.raster_layers import ImageOverlay as _ImageOverlay
+        from scipy.spatial import cKDTree as _cKDTree
+        from shapely import intersects as _intersects, points as _points
+
+        folium = _folium
+        gpd = _gpd
+        plt = _plt
+        FormatStrFormatter = _FormatStrFormatter
+        np = _np
+        pd = _pd
+        ImageOverlay = _ImageOverlay
+        cKDTree = _cKDTree
+        intersects = _intersects
+        points = _points
+        _heavy_imports_loaded = True
 
 
 # =========================================================
@@ -184,6 +223,7 @@ def format_observation_datetime(
 # =========================================================
 
 def load_station_data() -> pd.DataFrame:
+    ensure_heavy_imports()
     """
     ดึงข้อมูลสถานีจาก TMD WeatherToday API (XML):
     Temperature, Tmax, Tmin และ Rainfall
@@ -379,6 +419,7 @@ def get_first_text(
 
 
 def load_weather3hours_data() -> pd.DataFrame:
+    ensure_heavy_imports()
     """
     ดึงข้อมูล Weather3Hours จาก TMD API:
     Temperature, Rainfall และ Rainfall24Hour
@@ -623,6 +664,7 @@ def load_weather3hours_data() -> pd.DataFrame:
 # =========================================================
 
 def load_thailand_boundary() -> gpd.GeoDataFrame:
+    ensure_heavy_imports()
     """
     อ่าน thailand.geojson และแปลง CRS เป็น EPSG:4326
     """
@@ -780,6 +822,7 @@ def create_thailand_mask(
 # =========================================================
 
 def build_weather_overlays():
+    ensure_heavy_imports()
     """
     สร้าง Layer จาก 2 API
 
@@ -1205,6 +1248,7 @@ def create_weather_overlays(
 def create_publication_map(
     layer_key: str,
 ) -> tuple[io.BytesIO, str]:
+    ensure_heavy_imports()
     """
     สร้างแผนที่ประเทศไทยสำหรับรายงาน/งานวิชาการ
     ตาม Layer ที่ผู้ใช้เลือก และส่งออกเป็น PNG 300 DPI
@@ -2135,6 +2179,7 @@ def home() -> HTMLResponse:
     response_class=HTMLResponse,
 )
 def show_map() -> HTMLResponse:
+    ensure_heavy_imports()
     """
     หน้าแผนที่ Interactive
     """
