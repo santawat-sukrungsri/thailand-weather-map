@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+folium
+pandas
+numpy
+requests
+geopandas
+shapely
+matplotlib
+scipy
+openpyxl
