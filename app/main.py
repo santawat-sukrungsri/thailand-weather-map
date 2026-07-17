@@ -96,6 +96,18 @@ MAX_CACHE_ITEMS = 200
 
 
 # =========================================================
+# Cache สำหรับหน้าแผนที่ ลดเวลาประมวลผลบน Render
+# =========================================================
+
+WEATHER_OVERLAY_CACHE_SECONDS = 30 * 60
+weather_overlay_cache_lock = Lock()
+weather_overlay_cache: dict[str, object] = {
+    "created_at": 0.0,
+    "value": None,
+}
+
+
+# =========================================================
 # 4. ฟังก์ชันช่วยอ่าน XML จาก TMD API
 # =========================================================
 
@@ -767,7 +779,7 @@ def create_thailand_mask(
 # 9. สร้างภาพเฉดสี
 # =========================================================
 
-def create_weather_overlays():
+def build_weather_overlays():
     """
     สร้าง Layer จาก 2 API
 
@@ -849,8 +861,9 @@ def create_weather_overlays():
     minimum_lat -= padding
     maximum_lat += padding
 
-    grid_width = 220
-    grid_height = 380
+    # ลดความละเอียดสำหรับหน้าเว็บ เพื่อให้ Render Free ประมวลผลเร็วขึ้น
+    grid_width = 150
+    grid_height = 250
 
     longitude_values = np.linspace(
         minimum_lon,
@@ -1130,6 +1143,62 @@ def create_weather_overlays():
         today_error,
         weather3h_error,
     )
+
+
+
+def create_weather_overlays(
+    force_refresh: bool = False,
+):
+    """
+    คืนค่า Layer แผนที่จาก Cache
+
+    - Cache 30 นาที เพื่อลดการเรียก TMD API และการทำ IDW ซ้ำ
+    - ใช้ Lock ป้องกันหลายคำขอสร้างแผนที่พร้อมกัน
+    - หากการอัปเดตล้มเหลว แต่มี Cache เดิม จะใช้ Cache เดิมต่อ
+    """
+
+    current_time = time.time()
+    cached_value = weather_overlay_cache.get("value")
+    cache_age = (
+        current_time
+        - float(weather_overlay_cache.get("created_at", 0.0))
+    )
+
+    if (
+        not force_refresh
+        and cached_value is not None
+        and cache_age < WEATHER_OVERLAY_CACHE_SECONDS
+    ):
+        return cached_value
+
+    with weather_overlay_cache_lock:
+        current_time = time.time()
+        cached_value = weather_overlay_cache.get("value")
+        cache_age = (
+            current_time
+            - float(weather_overlay_cache.get("created_at", 0.0))
+        )
+
+        # ตรวจซ้ำหลังได้ Lock เผื่อคำขอก่อนหน้าสร้างเสร็จแล้ว
+        if (
+            not force_refresh
+            and cached_value is not None
+            and cache_age < WEATHER_OVERLAY_CACHE_SECONDS
+        ):
+            return cached_value
+
+        try:
+            fresh_value = build_weather_overlays()
+        except Exception:
+            # หาก TMD API มีปัญหาชั่วคราว ให้หน้าเว็บยังใช้ Cache เก่าได้
+            if cached_value is not None:
+                return cached_value
+            raise
+
+        weather_overlay_cache["value"] = fresh_value
+        weather_overlay_cache["created_at"] = time.time()
+
+        return fresh_value
 
 
 
