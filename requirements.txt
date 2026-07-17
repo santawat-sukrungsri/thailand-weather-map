@@ -9,3 +9,4 @@ shapely
 matplotlib
 scipy
 openpyxl
+httpx
