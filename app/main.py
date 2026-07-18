@@ -2550,10 +2550,10 @@ def show_map() -> HTMLResponse:
 <div id="value-box"><b id="value-title">Interpolated value</b><br>เลื่อนเมาส์ภายในประเทศไทย</div>
 <script>
 const map = L.map('map', {preferCanvas:true}).setView([13,101],5);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:18, attribution:'© OpenStreetMap contributors'}).addTo(map);
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:18, attribution:'© OpenStreetMap contributors'}).addTo(map);
 const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {maxZoom:19, attribution:'© OpenStreetMap contributors © CARTO'});
 const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom:19, attribution:'© OpenStreetMap contributors © CARTO'});
-L.control.layers({'OpenStreetMap': [...map._layers].map(x=>x[1]).find(x=>x instanceof L.TileLayer), 'พื้นอ่อน':light, 'พื้นเข้ม':dark}, {}, {collapsed:true}).addTo(map);
+L.control.layers({'OpenStreetMap': osm, 'พื้นอ่อน':light, 'พื้นเข้ม':dark}, {}, {collapsed:true}).addTo(map);
 let overlay=null, boundary=null, stationGroup=L.layerGroup().addTo(map), searchMarker=null;
 let currentData=null, stationsVisible=true;
 const statusBox=document.getElementById('status'), busy=document.getElementById('busy');
@@ -2565,7 +2565,7 @@ async function loadLayer(force=false){const key=document.getElementById('layer-s
 fetch('/api/boundary').then(r=>r.json()).then(d=>{boundary=L.geoJSON(d.geojson,{style:{color:'#111',weight:1.2,fillOpacity:0}}).addTo(map);map.fitBounds(d.bounds);statusBox.textContent='แผนที่พื้นฐานพร้อมแล้ว';loadLayer(false);}).catch(e=>{statusBox.textContent='โหลดขอบเขตประเทศไทยไม่สำเร็จ: '+e.message;});
 document.getElementById('load-button').onclick=()=>loadLayer(false);
 document.getElementById('export-button').onclick=()=>{const key=document.getElementById('layer-select').value;window.location.href='/export/publication?layer='+encodeURIComponent(key);};
-document.getElementById('station-button').onclick=()=>{stationsVisible=!stationsVisible;if(stationsVisible){stationGroup.addTo(map);event.target.textContent='ซ่อนสถานี';}else{map.removeLayer(stationGroup);event.target.textContent='แสดงสถานี';}};
+document.getElementById('station-button').onclick=(event)=>{stationsVisible=!stationsVisible;if(stationsVisible){stationGroup.addTo(map);event.target.textContent='ซ่อนสถานี';}else{map.removeLayer(stationGroup);event.target.textContent='แสดงสถานี';}};
 map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let nearest=currentData.stations.map(s=>({s,d:(s.latitude-e.latlng.lat)**2+(s.longitude-e.latlng.lng)**2})).sort((a,b)=>a.d-b.d).slice(0,8);let sw=0,sv=0;for(const x of nearest){const w=1/Math.max(x.d,1e-10);sw+=w;sv+=w*x.s.value;}document.getElementById('value-box').innerHTML='<b>Interpolated '+currentData.short_name+'</b><br>'+((sv/sw).toFixed(1))+' '+currentData.unit+'<br>Lat: '+e.latlng.lat.toFixed(4)+' | Lon: '+e.latlng.lng.toFixed(4);});
 async function searchPlace(){const q=document.getElementById('search-input').value.trim(),box=document.getElementById('search-results');if(q.length<2)return;document.getElementById('search-button').disabled=true;try{const r=await fetch('/api/search?q='+encodeURIComponent(q));const d=await r.json();if(!r.ok)throw new Error(d.detail||'ค้นหาไม่สำเร็จ');box.innerHTML='';for(const item of d.results){const div=document.createElement('div');div.className='result';div.textContent=item.display_name;div.onclick=()=>{if(searchMarker)map.removeLayer(searchMarker);searchMarker=L.marker([item.latitude,item.longitude]).addTo(map).bindPopup(item.display_name).openPopup();if(item.boundingbox){map.fitBounds([[item.boundingbox[0],item.boundingbox[2]],[item.boundingbox[1],item.boundingbox[3]]]);}else map.setView([item.latitude,item.longitude],13);box.style.display='none';};box.appendChild(div);}box.style.display=d.results.length?'block':'none';if(!d.results.length)statusBox.textContent='ไม่พบสถานที่';}catch(e){statusBox.textContent='Search error: '+e.message;}finally{document.getElementById('search-button').disabled=false;}}
 document.getElementById('search-button').onclick=searchPlace;document.getElementById('search-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchPlace();});
