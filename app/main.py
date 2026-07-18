@@ -2572,6 +2572,92 @@ map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let 
 map.on('click', function (e) {
 
     if (!currentData || !currentData.stations || currentData.stations.length === 0) return;
+    if (!boundary) return;
+
+    const pointLongitude = e.latlng.lng;
+    const pointLatitude = e.latlng.lat;
+
+    function pointInRing(longitude, latitude, ring) {
+        let inside = false;
+
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            const xi = ring[i][0];
+            const yi = ring[i][1];
+            const xj = ring[j][0];
+            const yj = ring[j][1];
+
+            const intersectsRing =
+                ((yi > latitude) !== (yj > latitude)) &&
+                (
+                    longitude <
+                    (xj - xi) * (latitude - yi) /
+                    ((yj - yi) || Number.EPSILON) + xi
+                );
+
+            if (intersectsRing) {
+                inside = !inside;
+            }
+        }
+
+        return inside;
+    }
+
+    function pointInPolygon(longitude, latitude, polygonCoordinates) {
+        if (!polygonCoordinates.length) return false;
+
+        if (!pointInRing(longitude, latitude, polygonCoordinates[0])) {
+            return false;
+        }
+
+        for (let i = 1; i < polygonCoordinates.length; i++) {
+            if (pointInRing(longitude, latitude, polygonCoordinates[i])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    function pointInsideThailand(longitude, latitude) {
+        const geojson = boundary.toGeoJSON();
+        const features = geojson.type === 'FeatureCollection'
+            ? geojson.features
+            : [geojson];
+
+        for (const feature of features) {
+            if (!feature || !feature.geometry) continue;
+
+            const geometry = feature.geometry;
+
+            if (
+                geometry.type === 'Polygon' &&
+                pointInPolygon(longitude, latitude, geometry.coordinates)
+            ) {
+                return true;
+            }
+
+            if (geometry.type === 'MultiPolygon') {
+                for (const polygonCoordinates of geometry.coordinates) {
+                    if (
+                        pointInPolygon(
+                            longitude,
+                            latitude,
+                            polygonCoordinates
+                        )
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    if (!pointInsideThailand(pointLongitude, pointLatitude)) {
+        map.closePopup();
+        return;
+    }
 
     const nearest = currentData.stations
         .map(s => ({
