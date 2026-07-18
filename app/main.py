@@ -181,6 +181,19 @@ boundary_cache: dict[str, object] = {
     "bounds": None,
 }
 
+# Cache สำหรับ Export Publication Map เท่านั้น
+EXPORT_CACHE_SECONDS = 30 * 60
+export_cache_lock = Lock()
+export_cache: dict[str, dict[str, object]] = {}
+
+export_source_cache_lock = Lock()
+export_source_cache: dict[str, object] = {
+    "created_at": 0.0,
+    "today_data": None,
+    "weather3h_data": None,
+    "thailand": None,
+}
+
 LAYER_DEFINITIONS = {
     "tmin": {
         "field": "tmin",
@@ -1340,6 +1353,65 @@ def create_weather_overlays(
 
 
 
+def get_export_source_data() -> tuple[object, object, object]:
+    """
+    คืนข้อมูลสถานีและขอบเขตประเทศไทยสำหรับ Export จาก Cache 30 นาที
+    เพื่อลดการเรียก API และอ่าน GeoJSON ซ้ำ
+    """
+
+    current_time = time.time()
+    cache_age = (
+        current_time
+        - float(export_source_cache.get("created_at", 0.0))
+    )
+
+    today_data = export_source_cache.get("today_data")
+    weather3h_data = export_source_cache.get("weather3h_data")
+    thailand = export_source_cache.get("thailand")
+
+    if (
+        today_data is not None
+        and weather3h_data is not None
+        and thailand is not None
+        and cache_age < EXPORT_CACHE_SECONDS
+    ):
+        return today_data, weather3h_data, thailand
+
+    with export_source_cache_lock:
+        current_time = time.time()
+        cache_age = (
+            current_time
+            - float(export_source_cache.get("created_at", 0.0))
+        )
+
+        today_data = export_source_cache.get("today_data")
+        weather3h_data = export_source_cache.get("weather3h_data")
+        thailand = export_source_cache.get("thailand")
+
+        if (
+            today_data is not None
+            and weather3h_data is not None
+            and thailand is not None
+            and cache_age < EXPORT_CACHE_SECONDS
+        ):
+            return today_data, weather3h_data, thailand
+
+        today_data = load_station_data()
+        weather3h_data = load_weather3hours_data()
+        thailand = load_thailand_boundary()
+
+        export_source_cache.update(
+            {
+                "created_at": time.time(),
+                "today_data": today_data,
+                "weather3h_data": weather3h_data,
+                "thailand": thailand,
+            }
+        )
+
+        return today_data, weather3h_data, thailand
+
+
 def create_publication_map(
     layer_key: str,
 ) -> tuple[io.BytesIO, str]:
@@ -1349,7 +1421,11 @@ def create_publication_map(
     ตาม Layer ที่ผู้ใช้เลือก และส่งออกเป็น PNG 300 DPI
     """
 
-    thailand = load_thailand_boundary()
+    (
+        cached_today_data,
+        cached_weather3h_data,
+        thailand,
+    ) = get_export_source_data()
 
     today_layer_keys = {
         "tmin",
@@ -1365,12 +1441,12 @@ def create_publication_map(
     }
 
     if layer_key in today_layer_keys:
-        today_data = load_station_data()
+        today_data = cached_today_data
         weather3h_data = pd.DataFrame()
 
     elif layer_key in weather3h_layer_keys:
         today_data = pd.DataFrame()
-        weather3h_data = load_weather3hours_data()
+        weather3h_data = cached_weather3h_data
 
     else:
         raise ValueError(
@@ -1488,8 +1564,8 @@ def create_publication_map(
     minimum_lat -= padding
     maximum_lat += padding
 
-    grid_width = 500
-    grid_height = 780
+    grid_width = 350
+    grid_height = 550
 
     longitude_values = np.linspace(
         minimum_lon,
@@ -1899,14 +1975,48 @@ def export_publication_map(
     """
 
     try:
-        image_buffer, file_name = (
-            create_publication_map(
-                layer_key=layer
-            )
-        )
+        current_time = time.time()
+        cached_item = export_cache.get(layer)
+
+        if (
+            cached_item is not None
+            and current_time
+            - float(cached_item["created_at"])
+            < EXPORT_CACHE_SECONDS
+        ):
+            image_bytes = cached_item["image_bytes"]
+            file_name = str(cached_item["file_name"])
+
+        else:
+            with export_cache_lock:
+                current_time = time.time()
+                cached_item = export_cache.get(layer)
+
+                if (
+                    cached_item is not None
+                    and current_time
+                    - float(cached_item["created_at"])
+                    < EXPORT_CACHE_SECONDS
+                ):
+                    image_bytes = cached_item["image_bytes"]
+                    file_name = str(cached_item["file_name"])
+
+                else:
+                    image_buffer, file_name = (
+                        create_publication_map(
+                            layer_key=layer
+                        )
+                    )
+                    image_bytes = image_buffer.getvalue()
+
+                    export_cache[layer] = {
+                        "created_at": time.time(),
+                        "image_bytes": image_bytes,
+                        "file_name": file_name,
+                    }
 
         return StreamingResponse(
-            image_buffer,
+            io.BytesIO(image_bytes),
             media_type="image/png",
             headers={
                 "Content-Disposition": (
