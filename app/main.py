@@ -2573,7 +2573,7 @@ map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let 
 if (valueBox) {
     valueBox.innerHTML =
         '<b id="value-title">Interpolated ' + currentData.short_name + '</b><br>' +
-        '<b>Interpolated '+currentData.short_name+'</b><br>'+((sv/sw).toFixed(1))+' '+currentData.unit+'<br>Lat: '+e.latlng.lat.toFixed(4)+' | Lon: '+e.latlng.lng.toFixed(4);
+        ((sv/sw).toFixed(1))+' '+currentData.unit+'<br>Lat: '+e.latlng.lat.toFixed(4)+' | Lon: '+e.latlng.lng.toFixed(4);
 }});
 
 
