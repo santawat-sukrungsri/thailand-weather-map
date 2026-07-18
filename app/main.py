@@ -2567,6 +2567,49 @@ document.getElementById('load-button').onclick=()=>loadLayer(false);
 document.getElementById('export-button').onclick=()=>{const key=document.getElementById('layer-select').value;window.location.href='/export/publication?layer='+encodeURIComponent(key);};
 document.getElementById('station-button').onclick=(event)=>{stationsVisible=!stationsVisible;if(stationsVisible){stationGroup.addTo(map);event.target.textContent='ซ่อนสถานี';}else{map.removeLayer(stationGroup);event.target.textContent='แสดงสถานี';}};
 map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let nearest=currentData.stations.map(s=>({s,d:(s.latitude-e.latlng.lat)**2+(s.longitude-e.latlng.lng)**2})).sort((a,b)=>a.d-b.d).slice(0,8);let sw=0,sv=0;for(const x of nearest){const w=1/Math.max(x.d,1e-10);sw+=w;sv+=w*x.s.value;}document.getElementById('value-box').innerHTML='<b>Interpolated '+currentData.short_name+'</b><br>'+((sv/sw).toFixed(1))+' '+currentData.unit+'<br>Lat: '+e.latlng.lat.toFixed(4)+' | Lon: '+e.latlng.lng.toFixed(4);});
+
+
+map.on('click', function (e) {
+
+    if (!currentData || !currentData.stations || currentData.stations.length === 0) return;
+
+    const nearest = currentData.stations
+        .map(s => ({
+            station: s,
+            d: Math.pow(s.latitude - e.latlng.lat, 2) +
+               Math.pow(s.longitude - e.latlng.lng, 2)
+        }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 8);
+
+    let value = 0;
+    let weightSum = 0;
+
+    nearest.forEach(item => {
+        const w = 1 / Math.max(item.d, 1e-10);
+        value += item.station.value * w;
+        weightSum += w;
+    });
+
+    value /= weightSum;
+
+    L.popup({
+        closeButton:false,
+        autoClose:true,
+        closeOnClick:true,
+        offset:[0,-5]
+    })
+    .setLatLng(e.latlng)
+    .setContent(
+        '<div style="font-size:22px;font-weight:bold;text-align:center;">'
+        + value.toFixed(1) + ' ' + currentData.unit +
+        '</div>'
+    )
+    .openOn(map);
+
+});
+
+
 async function searchPlace(){const q=document.getElementById('search-input').value.trim(),box=document.getElementById('search-results');if(q.length<2)return;document.getElementById('search-button').disabled=true;try{const r=await fetch('/api/search?q='+encodeURIComponent(q));const d=await r.json();if(!r.ok)throw new Error(d.detail||'ค้นหาไม่สำเร็จ');box.innerHTML='';for(const item of d.results){const div=document.createElement('div');div.className='result';div.textContent=item.display_name;div.onclick=()=>{if(searchMarker)map.removeLayer(searchMarker);searchMarker=L.marker([item.latitude,item.longitude]).addTo(map).bindPopup(item.display_name).openPopup();if(item.boundingbox){map.fitBounds([[item.boundingbox[0],item.boundingbox[2]],[item.boundingbox[1],item.boundingbox[3]]]);}else map.setView([item.latitude,item.longitude],13);box.style.display='none';};box.appendChild(div);}box.style.display=d.results.length?'block':'none';if(!d.results.length)statusBox.textContent='ไม่พบสถานที่';}catch(e){statusBox.textContent='Search error: '+e.message;}finally{document.getElementById('search-button').disabled=false;}}
 document.getElementById('search-button').onclick=searchPlace;document.getElementById('search-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchPlace();});
 </script>
