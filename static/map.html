@@ -447,23 +447,22 @@
     }
 
     async function loadLayersList() {
-      const response = await fetch("/api/layers", { cache: "no-store" });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || "โหลดรายการ Layer ไม่สำเร็จ");
-      }
+      const layers = [
+        { key: "tmin", name: "WeatherToday - Tmin" },
+        { key: "tmax", name: "WeatherToday - Tmax" },
+        { key: "rain", name: "WeatherToday - Rainfall" }
+      ];
 
       layerSelect.innerHTML = "";
 
-      for (const item of data.layers ?? []) {
+      for (const item of layers) {
         const option = document.createElement("option");
         option.value = item.key;
         option.textContent = item.name;
         layerSelect.appendChild(option);
       }
 
-      layerSelect.value = data.default || "tmin";
+      layerSelect.value = "tmin";
     }
 
     async function loadBoundary() {
