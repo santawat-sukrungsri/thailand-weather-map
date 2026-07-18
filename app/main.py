@@ -188,9 +188,11 @@ export_cache: dict[str, dict[str, object]] = {}
 
 export_source_cache_lock = Lock()
 export_source_cache: dict[str, object] = {
-    "created_at": 0.0,
+    "today_created_at": 0.0,
     "today_data": None,
+    "weather3h_created_at": 0.0,
     "weather3h_data": None,
+    "thailand_created_at": 0.0,
     "thailand": None,
 }
 
@@ -1353,64 +1355,95 @@ def create_weather_overlays(
 
 
 
-def get_export_source_data() -> tuple[object, object, object]:
+def get_export_source_data(
+    layer_key: str,
+) -> tuple[object, object]:
     """
-    คืนข้อมูลสถานีและขอบเขตประเทศไทยสำหรับ Export จาก Cache 30 นาที
-    เพื่อลดการเรียก API และอ่าน GeoJSON ซ้ำ
+    โหลดเฉพาะแหล่งข้อมูลที่ Layer สำหรับ Export ต้องใช้
+    และ Cache ข้อมูลแต่ละแหล่งแยกกัน 30 นาที
     """
 
-    current_time = time.time()
-    cache_age = (
-        current_time
-        - float(export_source_cache.get("created_at", 0.0))
-    )
+    today_layer_keys = {
+        "tmin",
+        "tmax",
+        "temperature",
+        "rainfall",
+    }
 
-    today_data = export_source_cache.get("today_data")
-    weather3h_data = export_source_cache.get("weather3h_data")
-    thailand = export_source_cache.get("thailand")
+    weather3h_layer_keys = {
+        "air_temperature_3h",
+        "rainfall_3h",
+        "rainfall_24h_3h",
+    }
 
-    if (
-        today_data is not None
-        and weather3h_data is not None
-        and thailand is not None
-        and cache_age < EXPORT_CACHE_SECONDS
-    ):
-        return today_data, weather3h_data, thailand
+    if layer_key not in today_layer_keys | weather3h_layer_keys:
+        raise ValueError(
+            f"ไม่รองรับ Layer: {layer_key}"
+        )
 
     with export_source_cache_lock:
         current_time = time.time()
-        cache_age = (
-            current_time
-            - float(export_source_cache.get("created_at", 0.0))
-        )
 
-        today_data = export_source_cache.get("today_data")
-        weather3h_data = export_source_cache.get("weather3h_data")
         thailand = export_source_cache.get("thailand")
+        thailand_age = (
+            current_time
+            - float(
+                export_source_cache.get(
+                    "thailand_created_at",
+                    0.0,
+                )
+            )
+        )
 
         if (
-            today_data is not None
-            and weather3h_data is not None
-            and thailand is not None
-            and cache_age < EXPORT_CACHE_SECONDS
+            thailand is None
+            or thailand_age >= EXPORT_CACHE_SECONDS
         ):
-            return today_data, weather3h_data, thailand
+            thailand = load_thailand_boundary()
+            export_source_cache["thailand"] = thailand
+            export_source_cache["thailand_created_at"] = time.time()
 
-        today_data = load_station_data()
-        weather3h_data = load_weather3hours_data()
-        thailand = load_thailand_boundary()
+        if layer_key in today_layer_keys:
+            source_data = export_source_cache.get("today_data")
+            source_age = (
+                current_time
+                - float(
+                    export_source_cache.get(
+                        "today_created_at",
+                        0.0,
+                    )
+                )
+            )
 
-        export_source_cache.update(
-            {
-                "created_at": time.time(),
-                "today_data": today_data,
-                "weather3h_data": weather3h_data,
-                "thailand": thailand,
-            }
-        )
+            if (
+                source_data is None
+                or source_age >= EXPORT_CACHE_SECONDS
+            ):
+                source_data = load_station_data()
+                export_source_cache["today_data"] = source_data
+                export_source_cache["today_created_at"] = time.time()
 
-        return today_data, weather3h_data, thailand
+        else:
+            source_data = export_source_cache.get("weather3h_data")
+            source_age = (
+                current_time
+                - float(
+                    export_source_cache.get(
+                        "weather3h_created_at",
+                        0.0,
+                    )
+                )
+            )
 
+            if (
+                source_data is None
+                or source_age >= EXPORT_CACHE_SECONDS
+            ):
+                source_data = load_weather3hours_data()
+                export_source_cache["weather3h_data"] = source_data
+                export_source_cache["weather3h_created_at"] = time.time()
+
+    return source_data, thailand
 
 def create_publication_map(
     layer_key: str,
@@ -1421,11 +1454,9 @@ def create_publication_map(
     ตาม Layer ที่ผู้ใช้เลือก และส่งออกเป็น PNG 300 DPI
     """
 
-    (
-        cached_today_data,
-        cached_weather3h_data,
-        thailand,
-    ) = get_export_source_data()
+    source_data, thailand = get_export_source_data(
+        layer_key=layer_key
+    )
 
     today_layer_keys = {
         "tmin",
@@ -1441,12 +1472,12 @@ def create_publication_map(
     }
 
     if layer_key in today_layer_keys:
-        today_data = cached_today_data
+        today_data = source_data
         weather3h_data = pd.DataFrame()
 
     elif layer_key in weather3h_layer_keys:
         today_data = pd.DataFrame()
-        weather3h_data = cached_weather3h_data
+        weather3h_data = source_data
 
     else:
         raise ValueError(
