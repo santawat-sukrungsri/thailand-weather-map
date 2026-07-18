@@ -2559,14 +2559,22 @@ let currentData=null, stationsVisible=true;
 const statusBox=document.getElementById('status'), busy=document.getElementById('busy');
 function setBusy(on,msg){busy.style.display=on?'flex':'none'; if(msg) busy.textContent=msg; document.getElementById('load-button').disabled=on;}
 function gradient(unit){return unit==='mm'?'linear-gradient(to right,#f7fbff,#deebf7,#c6dbef,#9ecae1,#6baed6,#4292c6,#2171b5,#08519c,#08306b)':'linear-gradient(to right,#30123b,#4145ab,#4675ed,#39a2fc,#1bcfd4,#24eca6,#61fc6c,#a4fc3c,#d1e834,#f9ba38,#f66b19,#d93806,#7a0403)';}
-function updateLegend(d){document.getElementById('legend-title').textContent=d.name;document.getElementById('gradient').style.background=gradient(d.unit);document.getElementById('min-value').textContent=Number(d.minimum).toFixed(1)+' '+d.unit;document.getElementById('max-value').textContent=Number(d.maximum).toFixed(1)+' '+d.unit;document.getElementById('value-title').textContent='Interpolated '+d.short_name;}
+function updateLegend(d){document.getElementById('legend-title').textContent=d.name;document.getElementById('gradient').style.background=gradient(d.unit);document.getElementById('min-value').textContent=Number(d.minimum).toFixed(1)+' '+d.unit;document.getElementById('max-value').textContent=Number(d.maximum).toFixed(1)+' '+d.unit;const valueTitle = document.getElementById('value-title');
+if (valueTitle) {
+    valueTitle.textContent = 'Interpolated '+d.short_name;
+}}
 function drawStations(d){stationGroup.clearLayers(); for(const s of d.stations){const marker=L.circleMarker([s.latitude,s.longitude],{radius:4,color:'#fff',weight:1,fillColor:'#111',fillOpacity:.9});marker.bindPopup(`<b>${String(s.station).replaceAll('<','&lt;')}</b><br>Province: ${String(s.province).replaceAll('<','&lt;')}<br>${d.short_name}: ${Number(s.value).toFixed(1)} ${d.unit}<br>Lat: ${s.latitude.toFixed(4)}<br>Lon: ${s.longitude.toFixed(4)}`);marker.addTo(stationGroup);} if(!stationsVisible) map.removeLayer(stationGroup);}
 async function loadLayer(force=false){const key=document.getElementById('layer-select').value;setBusy(true,'กำลังสร้าง '+key+'…');statusBox.textContent='กำลังดึงข้อมูลและสร้าง Layer เฉพาะรายการที่เลือก';try{const r=await fetch('/api/overlay?layer='+encodeURIComponent(key)+(force?'&refresh=true':''));const d=await r.json();if(!r.ok) throw new Error(d.detail||'โหลด Layer ไม่สำเร็จ');currentData=d;if(overlay) map.removeLayer(overlay);overlay=L.imageOverlay(d.image_url,d.bounds,{opacity:.74,interactive:false}).addTo(map);overlay.bringToFront();drawStations(d);updateLegend(d);statusBox.textContent=d.name+' | Observation: '+d.observation_time+' | Stations: '+d.stations.length;map.fitBounds(d.boundary_bounds);}catch(e){statusBox.textContent='Error: '+e.message;alert(e.message);}finally{setBusy(false);}}
 fetch('/api/boundary').then(r=>r.json()).then(d=>{boundary=L.geoJSON(d.geojson,{style:{color:'#111',weight:1.2,fillOpacity:0}}).addTo(map);map.fitBounds(d.bounds);statusBox.textContent='แผนที่พื้นฐานพร้อมแล้ว';loadLayer(false);}).catch(e=>{statusBox.textContent='โหลดขอบเขตประเทศไทยไม่สำเร็จ: '+e.message;});
 document.getElementById('load-button').onclick=()=>loadLayer(false);
 document.getElementById('export-button').onclick=()=>{const key=document.getElementById('layer-select').value;window.location.href='/export/publication?layer='+encodeURIComponent(key);};
 document.getElementById('station-button').onclick=(event)=>{stationsVisible=!stationsVisible;if(stationsVisible){stationGroup.addTo(map);event.target.textContent='ซ่อนสถานี';}else{map.removeLayer(stationGroup);event.target.textContent='แสดงสถานี';}};
-map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let nearest=currentData.stations.map(s=>({s,d:(s.latitude-e.latlng.lat)**2+(s.longitude-e.latlng.lng)**2})).sort((a,b)=>a.d-b.d).slice(0,8);let sw=0,sv=0;for(const x of nearest){const w=1/Math.max(x.d,1e-10);sw+=w;sv+=w*x.s.value;}document.getElementById('value-box').innerHTML='<b>Interpolated '+currentData.short_name+'</b><br>'+((sv/sw).toFixed(1))+' '+currentData.unit+'<br>Lat: '+e.latlng.lat.toFixed(4)+' | Lon: '+e.latlng.lng.toFixed(4);});
+map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let nearest=currentData.stations.map(s=>({s,d:(s.latitude-e.latlng.lat)**2+(s.longitude-e.latlng.lng)**2})).sort((a,b)=>a.d-b.d).slice(0,8);let sw=0,sv=0;for(const x of nearest){const w=1/Math.max(x.d,1e-10);sw+=w;sv+=w*x.s.value;}const valueBox = document.getElementById('value-box');
+if (valueBox) {
+    valueBox.innerHTML =
+        '<b id="value-title">Interpolated ' + currentData.short_name + '</b><br>' +
+        '<b>Interpolated '+currentData.short_name+'</b><br>'+((sv/sw).toFixed(1))+' '+currentData.unit+'<br>Lat: '+e.latlng.lat.toFixed(4)+' | Lon: '+e.latlng.lng.toFixed(4);
+}});
 
 
 map.on('click', function (e) {
