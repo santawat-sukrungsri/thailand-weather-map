@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thailand Weather Interpolation Map</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQ3ynsTjoQ7ewMZJqkN1PjN7W1n2CF0="
+    crossorigin=""
+  >
+
+  <style>
+    :root {
+      --panel-bg: rgba(255,255,255,.96);
+      --primary: #176da5;
+      --primary-dark: #0f537f;
+      --success: #147a54;
+      --text: #1d2c38;
+      --muted: #617484;
+      --border: #c7d3dc;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body, #map {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      font-family: Arial, "Noto Sans Thai", sans-serif;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    #map {
+      background: #dbeaf2;
+    }
+
+    .control-panel {
+      position: fixed;
+      z-index: 1100;
+      top: 12px;
+      left: 50px;
+      width: 420px;
+      max-width: calc(100vw - 70px);
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--panel-bg);
+      box-shadow: 0 3px 12px rgba(0,0,0,.22);
+      border: 1px solid rgba(0,0,0,.08);
+    }
+
+    .control-panel h1 {
+      font-size: 18px;
+      margin: 0 0 10px;
+      line-height: 1.25;
+    }
+
+    .row {
+      display: flex;
+      gap: 7px;
+      margin-bottom: 8px;
+      align-items: stretch;
+    }
+
+    select, input, button {
+      min-height: 38px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font: inherit;
+    }
+
+    select, input {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 10px;
+      background: white;
+      color: var(--text);
+    }
+
+    button {
+      border: 0;
+      padding: 8px 13px;
+      color: white;
+      background: var(--primary);
+      cursor: pointer;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    button:hover { background: var(--primary-dark); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .success { background: var(--success); }
+    .success:hover { background: #0f6142; }
+    .secondary { background: #52697b; }
+    .secondary:hover { background: #3f5362; }
+
+    #status {
+      min-height: 36px;
+      padding: 8px;
+      background: #f3f7fa;
+      border-radius: 6px;
+      color: #314858;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    #search-results {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 145px;
+      display: none;
+      max-height: 250px;
+      overflow-y: auto;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      box-shadow: 0 8px 22px rgba(0,0,0,.2);
+      z-index: 1200;
+    }
+
+    .search-item {
+      padding: 9px 11px;
+      border-bottom: 1px solid #edf1f4;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .search-item:hover {
+      background: #edf6fc;
+    }
+
+    .search-item:last-child {
+      border-bottom: 0;
+    }
+
+    #legend, #value-box {
+      position: fixed;
+      z-index: 1050;
+      bottom: 35px;
+      background: var(--panel-bg);
+      border: 2px solid #4f5c64;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    }
+
+    #legend {
+      left: 35px;
+      width: 250px;
+      padding: 12px;
+    }
+
+    #value-box {
+      right: 35px;
+      min-width: 250px;
+      padding: 12px;
+      line-height: 1.45;
+    }
+
+    #gradient {
+      height: 18px;
+      margin: 9px 0 5px;
+      border: 1px solid rgba(0,0,0,.15);
+    }
+
+    #legend-range {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+
+    #loading {
+      display: none;
+      position: fixed;
+      z-index: 3000;
+      inset: 0;
+      background: rgba(255,255,255,.78);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 19px;
+      font-weight: 700;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 5px solid #d7e5ee;
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .leaflet-control-scale-line {
+      background: rgba(255,255,255,.85);
+      border-color: #333;
+      color: #111;
+    }
+
+    @media (max-width: 760px) {
+      .control-panel {
+        left: 10px;
+        top: 10px;
+        width: calc(100vw - 20px);
+        max-width: none;
+      }
+
+      .control-panel h1 {
+        font-size: 16px;
+      }
+
+      .row {
+        gap: 5px;
+      }
+
+      select, input, button {
+        min-height: 36px;
+        font-size: 13px;
+      }
+
+      #legend {
+        left: 10px;
+        bottom: 10px;
+        width: 180px;
+      }
+
+      #value-box {
+        right: 10px;
+        bottom: 10px;
+        min-width: 160px;
+        max-width: 180px;
+        font-size: 12px;
+      }
+
+      #search-results {
+        top: 137px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <section class="control-panel">
+    <h1>Thailand Weather Interpolation Map</h1>
+
+    <div class="row">
+      <select id="layer-select"></select>
+      <button id="load-button">แสดง Layer</button>
+      <button id="refresh-button" class="secondary">รีเฟรช</button>
+    </div>
+
+    <div class="row">
+      <input id="search-input" placeholder="ค้นหาจังหวัด อำเภอ ตำบล หรือสถานที่">
+      <button id="search-button">ค้นหา</button>
+    </div>
+
+    <div class="row">
+      <button id="export-button" class="success">Export Publication Map</button>
+      <button id="station-button">ซ่อนสถานี</button>
+    </div>
+
+    <div id="status">กำลังเตรียมแผนที่พื้นฐาน…</div>
+    <div id="search-results"></div>
+  </section>
+
+  <aside id="legend">
+    <b id="legend-title">Layer</b>
+    <div id="gradient"></div>
+    <div id="legend-range">
+      <span id="min-value">-</span>
+      <span id="max-value">-</span>
+    </div>
+  </aside>
+
+  <aside id="value-box">
+    <b id="value-title">Interpolated value</b><br>
+    เลื่อนเมาส์ภายในประเทศไทย
+  </aside>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <div id="loading-text">กำลังโหลดข้อมูล…</div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin="">
+  </script>
+
+  <script>
+    const map = L.map("map", {
+      preferCanvas: true,
+      zoomControl: true
+    }).setView([13.0, 101.0], 6);
+
+    const osm = L.tileLayer(
+      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors"
+      }
+    ).addTo(map);
+
+    const light = L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors © CARTO"
+      }
+    );
+
+    const dark = L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {
+        maxZoom: 19,
+        attribution: "© OpenStreetMap contributors © CARTO"
+      }
+    );
+
+    L.control.layers(
+      {
+        "OpenStreetMap": osm,
+        "พื้นอ่อน": light,
+        "พื้นเข้ม": dark
+      },
+      {},
+      { collapsed: true }
+    ).addTo(map);
+
+    L.control.scale({
+      metric: true,
+      imperial: false,
+      position: "bottomright"
+    }).addTo(map);
+
+    const layerSelect = document.getElementById("layer-select");
+    const loadButton = document.getElementById("load-button");
+    const refreshButton = document.getElementById("refresh-button");
+    const exportButton = document.getElementById("export-button");
+    const stationButton = document.getElementById("station-button");
+    const searchInput = document.getElementById("search-input");
+    const searchButton = document.getElementById("search-button");
+    const searchResults = document.getElementById("search-results");
+    const statusBox = document.getElementById("status");
+    const loading = document.getElementById("loading");
+    const loadingText = document.getElementById("loading-text");
+
+    let boundaryLayer = null;
+    let overlayLayer = null;
+    let searchMarker = null;
+    let currentData = null;
+    let stationsVisible = true;
+    const stationGroup = L.layerGroup().addTo(map);
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function setLoading(isLoading, message = "กำลังโหลดข้อมูล…") {
+      loading.style.display = isLoading ? "flex" : "none";
+      loadingText.textContent = message;
+
+      loadButton.disabled = isLoading;
+      refreshButton.disabled = isLoading;
+      exportButton.disabled = isLoading;
+      searchButton.disabled = isLoading;
+    }
+
+    function gradientFor(unit) {
+      if (unit === "mm") {
+        return "linear-gradient(to right,#f7fbff,#deebf7,#c6dbef,#9ecae1,#6baed6,#4292c6,#2171b5,#08519c,#08306b)";
+      }
+
+      return "linear-gradient(to right,#30123b,#4145ab,#4675ed,#39a2fc,#1bcfd4,#24eca6,#61fc6c,#a4fc3c,#d1e834,#f9ba38,#f66b19,#d93806,#7a0403)";
+    }
+
+    function updateLegend(data) {
+      document.getElementById("legend-title").textContent = data.name;
+      document.getElementById("gradient").style.background =
+        gradientFor(data.unit);
+
+      document.getElementById("min-value").textContent =
+        `${Number(data.minimum).toFixed(1)} ${data.unit}`;
+
+      document.getElementById("max-value").textContent =
+        `${Number(data.maximum).toFixed(1)} ${data.unit}`;
+
+      document.getElementById("value-title").textContent =
+        `Interpolated ${data.short_name}`;
+    }
+
+    function drawStations(data) {
+      stationGroup.clearLayers();
+
+      for (const station of data.stations ?? []) {
+        const marker = L.circleMarker(
+          [station.latitude, station.longitude],
+          {
+            radius: 3.2,
+            color: "#ffffff",
+            weight: 0.9,
+            fillColor: "#111111",
+            fillOpacity: 0.92
+          }
+        );
+
+        const popup = `
+          <b>${escapeHtml(station.station)}</b><br>
+          จังหวัด: ${escapeHtml(station.province || "-")}<br>
+          ${escapeHtml(data.short_name)}:
+          ${Number(station.value).toFixed(1)} ${escapeHtml(data.unit)}<br>
+          Lat: ${Number(station.latitude).toFixed(4)}<br>
+          Lon: ${Number(station.longitude).toFixed(4)}
+        `;
+
+        marker.bindPopup(popup);
+        marker.bindTooltip(
+          `${escapeHtml(station.station)}<br>${escapeHtml(data.short_name)}: ${Number(station.value).toFixed(1)} ${escapeHtml(data.unit)}`,
+          { direction: "top", sticky: true }
+        );
+
+        marker.addTo(stationGroup);
+      }
+
+      if (!stationsVisible && map.hasLayer(stationGroup)) {
+        map.removeLayer(stationGroup);
+      }
+    }
+
+    async function loadLayersList() {
+      const response = await fetch("/api/layers", { cache: "no-store" });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "โหลดรายการ Layer ไม่สำเร็จ");
+      }
+
+      layerSelect.innerHTML = "";
+
+      for (const item of data.layers ?? []) {
+        const option = document.createElement("option");
+        option.value = item.key;
+        option.textContent = item.name;
+        layerSelect.appendChild(option);
+      }
+
+      layerSelect.value = data.default || "tmin";
+    }
+
+    async function loadBoundary() {
+      const response = await fetch("/api/boundary", { cache: "no-store" });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "โหลดขอบเขตประเทศไทยไม่สำเร็จ");
+      }
+
+      if (boundaryLayer) {
+        map.removeLayer(boundaryLayer);
+      }
+
+      boundaryLayer = L.geoJSON(data.geojson, {
+        style: {
+          color: "#111111",
+          weight: 1.1,
+          fillOpacity: 0
+        }
+      }).addTo(map);
+
+      map.fitBounds(data.bounds, {
+        padding: [10, 10]
+      });
+    }
+
+    async function loadWeatherLayer(forceRefresh = false) {
+      const layerKey = layerSelect.value || "tmin";
+
+      setLoading(
+        true,
+        forceRefresh
+          ? `กำลังดึงข้อมูลใหม่และสร้าง ${layerKey}…`
+          : `กำลังสร้าง ${layerKey}…`
+      );
+
+      statusBox.textContent =
+        "กำลังดึงข้อมูลสถานีและสร้าง Interpolation กรุณารอสักครู่";
+
+      try {
+        const url =
+          `/api/overlay?layer=${encodeURIComponent(layerKey)}` +
+          (forceRefresh ? "&refresh=true" : "");
+
+        const response = await fetch(url, {
+          cache: "no-store"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "โหลด Layer ไม่สำเร็จ");
+        }
+
+        currentData = data;
+
+        if (overlayLayer) {
+          map.removeLayer(overlayLayer);
+        }
+
+        overlayLayer = L.imageOverlay(
+          data.image_url,
+          data.bounds,
+          {
+            opacity: 0.78,
+            interactive: false
+          }
+        ).addTo(map);
+
+        overlayLayer.bringToFront();
+
+        drawStations(data);
+        updateLegend(data);
+
+        if (boundaryLayer) {
+          boundaryLayer.bringToFront();
+        }
+
+        if (stationsVisible && !map.hasLayer(stationGroup)) {
+          stationGroup.addTo(map);
+        }
+
+        const cacheText = data.from_cache
+          ? "ใช้ข้อมูลจาก Cache"
+          : "สร้างข้อมูลใหม่";
+
+        statusBox.textContent =
+          `${data.name} | Observation: ${data.observation_time} | ` +
+          `Stations: ${(data.stations ?? []).length} | ${cacheText}`;
+
+        map.fitBounds(data.boundary_bounds, {
+          padding: [8, 8]
+        });
+      } catch (error) {
+        statusBox.textContent = `Error: ${error.message}`;
+        alert(error.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function toggleStations(event) {
+      stationsVisible = !stationsVisible;
+
+      if (stationsVisible) {
+        stationGroup.addTo(map);
+        event.target.textContent = "ซ่อนสถานี";
+      } else {
+        map.removeLayer(stationGroup);
+        event.target.textContent = "แสดงสถานี";
+      }
+    }
+
+    function interpolateAtCursor(lat, lon) {
+      if (!currentData || !(currentData.stations ?? []).length) {
+        return null;
+      }
+
+      const nearest = currentData.stations
+        .map((station) => {
+          const dLat = station.latitude - lat;
+          const dLon = station.longitude - lon;
+          return {
+            station,
+            distanceSquared: dLat * dLat + dLon * dLon
+          };
+        })
+        .sort((a, b) => a.distanceSquared - b.distanceSquared)
+        .slice(0, 10);
+
+      let sumWeight = 0;
+      let sumValue = 0;
+
+      for (const item of nearest) {
+        const weight = 1 / Math.max(item.distanceSquared, 1e-12);
+        sumWeight += weight;
+        sumValue += weight * Number(item.station.value);
+      }
+
+      return sumWeight > 0 ? sumValue / sumWeight : null;
+    }
+
+    map.on("mousemove", (event) => {
+      const value = interpolateAtCursor(
+        event.latlng.lat,
+        event.latlng.lng
+      );
+
+      if (value === null || !currentData) {
+        return;
+      }
+
+      document.getElementById("value-box").innerHTML = `
+        <b>Interpolated ${escapeHtml(currentData.short_name)}</b><br>
+        ${Number(value).toFixed(1)} ${escapeHtml(currentData.unit)}<br>
+        Lat: ${event.latlng.lat.toFixed(4)} |
+        Lon: ${event.latlng.lng.toFixed(4)}
+      `;
+    });
+
+    async function searchPlace() {
+      const query = searchInput.value.trim();
+
+      if (query.length < 2) {
+        statusBox.textContent = "กรุณาพิมพ์คำค้นหาอย่างน้อย 2 ตัวอักษร";
+        return;
+      }
+
+      searchButton.disabled = true;
+      searchResults.style.display = "none";
+      statusBox.textContent = "กำลังค้นหาสถานที่…";
+
+      try {
+        const response = await fetch(
+          `/api/search?q=${encodeURIComponent(query)}`,
+          { cache: "no-store" }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "ค้นหาไม่สำเร็จ");
+        }
+
+        searchResults.innerHTML = "";
+
+        for (const item of data.results ?? []) {
+          const element = document.createElement("div");
+          element.className = "search-item";
+          element.textContent = item.display_name;
+
+          element.addEventListener("click", () => {
+            if (searchMarker) {
+              map.removeLayer(searchMarker);
+            }
+
+            searchMarker = L.marker(
+              [item.latitude, item.longitude]
+            )
+              .addTo(map)
+              .bindPopup(escapeHtml(item.display_name))
+              .openPopup();
+
+            if (
+              Array.isArray(item.boundingbox) &&
+              item.boundingbox.length === 4
+            ) {
+              const [south, north, west, east] = item.boundingbox;
+              map.fitBounds(
+                [
+                  [south, west],
+                  [north, east]
+                ],
+                { padding: [20, 20] }
+              );
+            } else {
+              map.setView(
+                [item.latitude, item.longitude],
+                13
+              );
+            }
+
+            searchResults.style.display = "none";
+            statusBox.textContent = `พบ: ${item.display_name}`;
+          });
+
+          searchResults.appendChild(element);
+        }
+
+        if ((data.results ?? []).length) {
+          searchResults.style.display = "block";
+          statusBox.textContent =
+            `พบ ${(data.results ?? []).length} รายการ`;
+        } else {
+          statusBox.textContent = "ไม่พบสถานที่";
+        }
+      } catch (error) {
+        statusBox.textContent = `Search error: ${error.message}`;
+      } finally {
+        searchButton.disabled = false;
+      }
+    }
+
+    loadButton.addEventListener(
+      "click",
+      () => loadWeatherLayer(false)
+    );
+
+    refreshButton.addEventListener(
+      "click",
+      () => loadWeatherLayer(true)
+    );
+
+    stationButton.addEventListener(
+      "click",
+      toggleStations
+    );
+
+    exportButton.addEventListener("click", () => {
+      const layerKey = layerSelect.value || "tmin";
+      window.location.href =
+        `/export/publication?layer=${encodeURIComponent(layerKey)}`;
+    });
+
+    searchButton.addEventListener(
+      "click",
+      searchPlace
+    );
+
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        searchPlace();
+      }
+    });
+
+    document.addEventListener("click", (event) => {
+      if (
+        !searchResults.contains(event.target) &&
+        event.target !== searchInput &&
+        event.target !== searchButton
+      ) {
+        searchResults.style.display = "none";
+      }
+    });
+
+    async function initialize() {
+      setLoading(true, "กำลังเตรียมแผนที่ประเทศไทย…");
+
+      try {
+        await loadLayersList();
+        await loadBoundary();
+        statusBox.textContent = "แผนที่พื้นฐานพร้อมแล้ว";
+        await loadWeatherLayer(false);
+      } catch (error) {
+        statusBox.textContent = `Error: ${error.message}`;
+        alert(error.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    initialize();
+  </script>
+</body>
+</html>
