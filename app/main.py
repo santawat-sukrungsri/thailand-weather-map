@@ -1449,6 +1449,9 @@ def create_publication_map(
     layer_key: str,
 ) -> tuple[io.BytesIO, str]:
     ensure_plot_imports()
+    from PIL import Image
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
     """
     สร้างแผนที่ประเทศไทยสำหรับรายงาน/งานวิชาการ
     ตาม Layer ที่ผู้ใช้เลือก และส่งออกเป็น PNG 300 DPI
@@ -1581,98 +1584,43 @@ def create_publication_map(
             "Layer ที่เลือกไม่มีข้อมูลสำหรับสร้างแผนที่"
         )
 
+    # ใช้ Overlay ที่หน้าเว็บสร้างและ Cache ไว้แล้ว
+    # เพื่อตัดการคำนวณ IDW, Mask และ contourf ซ้ำตอน Export
+    cached_layer = get_single_layer(
+        layer_key=layer_key
+    )
+
     (
-        minimum_lon,
-        minimum_lat,
-        maximum_lon,
-        maximum_lat,
-    ) = thailand.total_bounds
+        (minimum_lat, minimum_lon),
+        (maximum_lat, maximum_lon),
+    ) = cached_layer["bounds"]
 
-    padding = 0.20
-
-    minimum_lon -= padding
-    maximum_lon += padding
-    minimum_lat -= padding
-    maximum_lat += padding
-
-    grid_width = 350
-    grid_height = 550
-
-    longitude_values = np.linspace(
-        minimum_lon,
-        maximum_lon,
-        grid_width,
+    minimum_value = float(
+        cached_layer["minimum"]
+    )
+    maximum_value = float(
+        cached_layer["maximum"]
     )
 
-    latitude_values = np.linspace(
-        minimum_lat,
-        maximum_lat,
-        grid_height,
+    if maximum_value <= minimum_value:
+        maximum_value = minimum_value + 1.0
+
+    image_url = str(
+        cached_layer["image_url"]
     )
 
-    grid_lon, grid_lat = np.meshgrid(
-        longitude_values,
-        latitude_values,
-    )
+    encoded_image = image_url.split(
+        ",",
+        1,
+    )[1]
 
-    grid_values = idw_interpolation(
-        station_lon=valid_data[
-            "longitude"
-        ].to_numpy(),
-        station_lat=valid_data[
-            "latitude"
-        ].to_numpy(),
-        station_value=valid_data[
-            definition["field"]
-        ].to_numpy(),
-        grid_lon=grid_lon,
-        grid_lat=grid_lat,
-        power=2.0,
-        nearest_points=8,
-    )
-
-    thailand_mask = create_thailand_mask(
-        grid_lon=grid_lon,
-        grid_lat=grid_lat,
-        thailand=thailand,
-    )
-
-    masked_values = np.ma.masked_where(
-        ~thailand_mask,
-        grid_values,
-    )
-
-    station_values = valid_data[
-        definition["field"]
-    ].to_numpy()
-
-    if definition["unit"] == "mm":
-        minimum_value = 0.0
-        maximum_value = float(
-            np.ceil(
-                station_values.max()
+    overlay_image = Image.open(
+        io.BytesIO(
+            base64.b64decode(
+                encoded_image
             )
         )
-    else:
-        minimum_value = float(
-            np.floor(
-                station_values.min()
-            )
-        )
-        maximum_value = float(
-            np.ceil(
-                station_values.max()
-            )
-        )
-
-    if minimum_value == maximum_value:
-        maximum_value += 1.0
-
-    levels = np.linspace(
-        minimum_value,
-        maximum_value,
-        27,
-    )
+    ).convert("RGBA")
 
     figure = plt.figure(
         figsize=(8.27, 11.69),
@@ -1684,22 +1632,27 @@ def create_publication_map(
         [0.10, 0.18, 0.80, 0.68]
     )
 
-    contour = map_axis.contourf(
-        grid_lon,
-        grid_lat,
-        masked_values,
-        levels=levels,
-        cmap=definition["cmap"],
-        vmin=minimum_value,
-        vmax=maximum_value,
-        extend=(
-            "max"
-            if definition["unit"] == "mm"
-            else "both"
-        ),
-        antialiased=True,
+    map_axis.imshow(
+        overlay_image,
+        extent=[
+            minimum_lon,
+            maximum_lon,
+            minimum_lat,
+            maximum_lat,
+        ],
+        origin="upper",
+        interpolation="bilinear",
         zorder=1,
     )
+
+    colorbar_mappable = ScalarMappable(
+        norm=Normalize(
+            vmin=minimum_value,
+            vmax=maximum_value,
+        ),
+        cmap=definition["cmap"],
+    )
+    colorbar_mappable.set_array([])
 
     thailand.boundary.plot(
         ax=map_axis,
@@ -1899,7 +1852,7 @@ def create_publication_map(
     )
 
     colorbar = figure.colorbar(
-        contour,
+        colorbar_mappable,
         cax=colorbar_axis,
         orientation="horizontal",
         format=FormatStrFormatter("%.1f"),
