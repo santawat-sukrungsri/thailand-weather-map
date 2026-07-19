@@ -2731,7 +2731,7 @@ def show_map() -> HTMLResponse:
 <div id="panel">
   <h2>Thailand Weather Interpolation Map</h2>
   <div class="row"><select id="layer-select">__LAYER_OPTIONS__</select><button id="load-button">แสดง Layer</button></div>
-  <div class="row"><input id="search-input" placeholder="ค้นหาจังหวัด อำเภอ ตำบล หรือสถานที่"><button id="search-button">ค้นหา</button></div>
+  <div class="row"><input id="search-input" placeholder="ค้นหาจังหวัด อำเภอ ตำบล หรือสถานที่"><button id="search-button">ค้นหา</button><button id="location-button">ตำแหน่งของฉัน</button></div>
   <div class="row"><button id="export-button">Export Publication Map</button><button id="station-button">ซ่อนสถานี</button></div>
   <div id="status">กำลังเตรียมแผนที่พื้นฐาน…</div>
   <div id="search-results"></div>
@@ -2745,6 +2745,7 @@ const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{
 const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom:19, attribution:'© OpenStreetMap contributors © CARTO'});
 L.control.layers({'OpenStreetMap': osm, 'พื้นอ่อน':light, 'พื้นเข้ม':dark}, {}, {collapsed:true}).addTo(map);
 let overlay=null, boundary=null, stationGroup=L.layerGroup().addTo(map), searchMarker=null;
+let myLocationMarker=null;
 let currentData=null, stationsVisible=true;
 const statusBox=document.getElementById('status'), busy=document.getElementById('busy');
 function setBusy(on,msg){busy.style.display=on?'flex':'none'; if(msg) busy.textContent=msg; document.getElementById('load-button').disabled=on;}
@@ -2952,6 +2953,70 @@ map.on('click', function (e) {
 
 });
 
+
+function goToMyLocation(){
+    const button=document.getElementById('location-button');
+
+    if(!navigator.geolocation){
+        alert('เบราว์เซอร์นี้ไม่รองรับการค้นหาตำแหน่ง');
+        return;
+    }
+
+    const originalText=button.textContent;
+    button.disabled=true;
+    button.textContent='กำลังค้นหา...';
+
+    navigator.geolocation.getCurrentPosition(
+        position=>{
+            const latitude=position.coords.latitude;
+            const longitude=position.coords.longitude;
+            const accuracy=position.coords.accuracy;
+
+            map.setView([latitude,longitude],15);
+
+            if(myLocationMarker){
+                map.removeLayer(myLocationMarker);
+            }
+
+            myLocationMarker=L.marker(
+                [latitude,longitude]
+            )
+            .addTo(map)
+            .bindPopup(
+                '<b>ตำแหน่งของฉัน</b><br>'+
+                'Lat: '+latitude.toFixed(6)+'<br>'+
+                'Lon: '+longitude.toFixed(6)+'<br>'+
+                'ความแม่นยำโดยประมาณ: '+Math.round(accuracy)+' เมตร'
+            )
+            .openPopup();
+
+            button.disabled=false;
+            button.textContent=originalText;
+        },
+        error=>{
+            let message='ไม่สามารถค้นหาตำแหน่งได้';
+
+            if(error.code===error.PERMISSION_DENIED){
+                message='กรุณาอนุญาตให้เว็บไซต์เข้าถึงตำแหน่ง';
+            }else if(error.code===error.POSITION_UNAVAILABLE){
+                message='ไม่พบข้อมูลตำแหน่งในขณะนี้';
+            }else if(error.code===error.TIMEOUT){
+                message='ค้นหาตำแหน่งนานเกินไป';
+            }
+
+            alert(message);
+            button.disabled=false;
+            button.textContent=originalText;
+        },
+        {
+            enableHighAccuracy:true,
+            timeout:15000,
+            maximumAge:60000
+        }
+    );
+}
+
+document.getElementById('location-button').onclick=goToMyLocation;
 
 async function searchPlace(){const q=document.getElementById('search-input').value.trim(),box=document.getElementById('search-results');if(q.length<2)return;document.getElementById('search-button').disabled=true;try{const r=await fetch('/api/search?q='+encodeURIComponent(q));const d=await r.json();if(!r.ok)throw new Error(d.detail||'ค้นหาไม่สำเร็จ');box.innerHTML='';for(const item of d.results){const div=document.createElement('div');div.className='result';div.textContent=item.display_name;div.onclick=()=>{if(searchMarker)map.removeLayer(searchMarker);searchMarker=L.marker([item.latitude,item.longitude]).addTo(map).bindPopup(item.display_name).openPopup();if(item.boundingbox){map.fitBounds([[item.boundingbox[0],item.boundingbox[2]],[item.boundingbox[1],item.boundingbox[3]]]);}else map.setView([item.latitude,item.longitude],13);box.style.display='none';};box.appendChild(div);}box.style.display=d.results.length?'block':'none';if(!d.results.length)statusBox.textContent='ไม่พบสถานที่';}catch(e){statusBox.textContent='Search error: '+e.message;}finally{document.getElementById('search-button').disabled=false;}}
 document.getElementById('search-button').onclick=searchPlace;document.getElementById('search-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchPlace();});
