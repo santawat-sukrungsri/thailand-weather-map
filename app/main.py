@@ -1359,91 +1359,137 @@ def get_export_source_data(
     layer_key: str,
 ) -> tuple[object, object]:
     """
-    โหลดเฉพาะแหล่งข้อมูลที่ Layer สำหรับ Export ต้องใช้
-    และ Cache ข้อมูลแต่ละแหล่งแยกกัน 30 นาที
+    ใช้ข้อมูลที่หน้าแผนที่โหลดไว้แล้วก่อน
+    หากไม่มี Cache จึงค่อยเรียก TMD API
     """
 
-    today_layer_keys = {
-        "tmin",
-        "tmax",
-        "temperature",
-        "rainfall",
-    }
+    ensure_data_imports()
 
-    weather3h_layer_keys = {
-        "air_temperature_3h",
-        "rainfall_3h",
-        "rainfall_24h_3h",
-    }
-
-    if layer_key not in today_layer_keys | weather3h_layer_keys:
+    definition = LAYER_DEFINITIONS.get(layer_key)
+    if definition is None:
         raise ValueError(
             f"ไม่รองรับ Layer: {layer_key}"
         )
 
-    with export_source_cache_lock:
-        current_time = time.time()
+    field = definition["field"]
+    source_name = definition["source"]
 
-        thailand = export_source_cache.get("thailand")
-        thailand_age = (
-            current_time
-            - float(
-                export_source_cache.get(
-                    "thailand_created_at",
-                    0.0,
-                )
+    if source_name == "today":
+        time_field = "observation_datetime"
+        source_cache_key = "today_data"
+        source_time_key = "today_created_at"
+    else:
+        time_field = "observation_datetime_3h"
+        source_cache_key = "weather3h_data"
+        source_time_key = "weather3h_created_at"
+
+    # 1) ใช้ข้อมูลสถานีจาก Layer ที่หน้าเว็บสร้างไว้แล้ว
+    # ใช้ได้แม้ Cache ภาพหมดอายุ เพราะข้อมูลยังดีกว่าการรอ API ใหม่
+    cached_layer = layer_cache.get(layer_key)
+
+    if (
+        cached_layer is not None
+        and cached_layer.get("stations")
+    ):
+        station_records = []
+
+        for station in cached_layer["stations"]:
+            station_records.append(
+                {
+                    "station": station.get(
+                        "station",
+                        "Weather Station",
+                    ),
+                    "province": station.get(
+                        "province",
+                        "",
+                    ),
+                    "latitude": station["latitude"],
+                    "longitude": station["longitude"],
+                    field: station["value"],
+                    time_field: cached_layer.get(
+                        "observation_time",
+                        "",
+                    ),
+                }
             )
+
+        cached_dataframe = pd.DataFrame(
+            station_records
         )
 
-        if (
-            thailand is None
-            or thailand_age >= EXPORT_CACHE_SECONDS
-        ):
-            thailand = load_thailand_boundary()
-            export_source_cache["thailand"] = thailand
-            export_source_cache["thailand_created_at"] = time.time()
+        if not cached_dataframe.empty:
+            _, _, thailand = _get_boundary_payload()
+            return cached_dataframe, thailand
 
-        if layer_key in today_layer_keys:
-            source_data = export_source_cache.get("today_data")
-            source_age = (
-                current_time
-                - float(
-                    export_source_cache.get(
-                        "today_created_at",
-                        0.0,
-                    )
-                )
-            )
+    # 2) ใช้ DataFrame จาก Cache เก่าของระบบ Overlay หากมี
+    overlay_value = weather_overlay_cache.get("value")
+
+    if overlay_value is not None:
+        try:
+            if source_name == "today":
+                cached_dataframe = overlay_value[1]
+            else:
+                cached_dataframe = overlay_value[2]
+
+            thailand = overlay_value[3]
 
             if (
-                source_data is None
-                or source_age >= EXPORT_CACHE_SECONDS
+                cached_dataframe is not None
+                and not cached_dataframe.empty
+                and thailand is not None
             ):
-                source_data = load_station_data()
-                export_source_cache["today_data"] = source_data
-                export_source_cache["today_created_at"] = time.time()
+                return cached_dataframe, thailand
+        except (IndexError, TypeError, AttributeError):
+            pass
 
-        else:
-            source_data = export_source_cache.get("weather3h_data")
-            source_age = (
-                current_time
-                - float(
-                    export_source_cache.get(
-                        "weather3h_created_at",
-                        0.0,
-                    )
-                )
-            )
+    # 3) ใช้ Export source cache เดิม
+    with export_source_cache_lock:
+        cached_dataframe = export_source_cache.get(
+            source_cache_key
+        )
 
-            if (
-                source_data is None
-                or source_age >= EXPORT_CACHE_SECONDS
-            ):
-                source_data = load_weather3hours_data()
-                export_source_cache["weather3h_data"] = source_data
-                export_source_cache["weather3h_created_at"] = time.time()
+        thailand = export_source_cache.get(
+            "thailand"
+        )
 
-    return source_data, thailand
+        if cached_dataframe is not None:
+            try:
+                if not cached_dataframe.empty:
+                    if thailand is None:
+                        _, _, thailand = _get_boundary_payload()
+                        export_source_cache["thailand"] = thailand
+                        export_source_cache[
+                            "thailand_created_at"
+                        ] = time.time()
+
+                    return cached_dataframe, thailand
+            except AttributeError:
+                pass
+
+    # 4) ไม่มี Cache ใดเลย จึงค่อยเรียก API
+    if source_name == "today":
+        fresh_dataframe = load_station_data()
+    else:
+        fresh_dataframe = load_weather3hours_data()
+
+    _, _, thailand = _get_boundary_payload()
+
+    with export_source_cache_lock:
+        export_source_cache[
+            source_cache_key
+        ] = fresh_dataframe
+        export_source_cache[
+            source_time_key
+        ] = time.time()
+        export_source_cache[
+            "thailand"
+        ] = thailand
+        export_source_cache[
+            "thailand_created_at"
+        ] = time.time()
+
+    return fresh_dataframe, thailand
 
 def create_publication_map(
     layer_key: str,
