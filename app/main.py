@@ -2757,13 +2757,65 @@ function drawStations(d){stationGroup.clearLayers(); for(const s of d.stations){
 async function loadLayer(force=false){const key=document.getElementById('layer-select').value;setBusy(true,'กำลังสร้าง '+key+'…');statusBox.textContent='กำลังดึงข้อมูลและสร้าง Layer เฉพาะรายการที่เลือก';try{const r=await fetch('/api/overlay?layer='+encodeURIComponent(key)+(force?'&refresh=true':''));const d=await r.json();if(!r.ok) throw new Error(d.detail||'โหลด Layer ไม่สำเร็จ');currentData=d;if(overlay) map.removeLayer(overlay);overlay=L.imageOverlay(d.image_url,d.bounds,{opacity:.74,interactive:false}).addTo(map);overlay.bringToFront();drawStations(d);updateLegend(d);statusBox.textContent=d.name+' | Observation: '+d.observation_time+' | Stations: '+d.stations.length;map.fitBounds(d.boundary_bounds);}catch(e){statusBox.textContent='Error: '+e.message;alert(e.message);}finally{setBusy(false);}}
 fetch('/api/boundary').then(r=>r.json()).then(d=>{boundary=L.geoJSON(d.geojson,{style:{color:'#111',weight:1.2,fillOpacity:0}}).addTo(map);map.fitBounds(d.bounds);statusBox.textContent='แผนที่พื้นฐานพร้อมแล้ว';loadLayer(false);}).catch(e=>{statusBox.textContent='โหลดขอบเขตประเทศไทยไม่สำเร็จ: '+e.message;});
 document.getElementById('load-button').onclick=()=>loadLayer(false);
-document.getElementById('export-button').onclick=(event)=>{
+document.getElementById('export-button').onclick=async(event)=>{
     const exportButton=event.currentTarget;
     if(exportButton.disabled)return;
+
+    const originalText=exportButton.textContent;
     exportButton.disabled=true;
     exportButton.textContent='กำลังสร้างแผนที่...';
-    const key=document.getElementById('layer-select').value;
-    window.location.href='/export/publication?layer='+encodeURIComponent(key);
+
+    try{
+        const key=document.getElementById('layer-select').value;
+        const response=await fetch(
+            '/export/publication?layer='+encodeURIComponent(key)
+        );
+
+        if(!response.ok){
+            let errorMessage='ไม่สามารถสร้างแผนที่ได้';
+            try{
+                const errorData=await response.json();
+                if(errorData.detail){
+                    errorMessage=errorData.detail;
+                }
+            }catch(error){
+                // ใช้ข้อความเริ่มต้น หาก Response ไม่ใช่ JSON
+            }
+            throw new Error(errorMessage);
+        }
+
+        const blob=await response.blob();
+        const contentDisposition=response.headers.get(
+            'Content-Disposition'
+        );
+
+        let fileName='Thailand_Publication_Map.png';
+        const fileNameMatch=contentDisposition
+            ? contentDisposition.match(/filename="?([^";]+)"?/i)
+            : null;
+
+        if(fileNameMatch&&fileNameMatch[1]){
+            fileName=fileNameMatch[1];
+        }
+
+        const downloadUrl=URL.createObjectURL(blob);
+        const downloadLink=document.createElement('a');
+        downloadLink.href=downloadUrl;
+        downloadLink.download=fileName;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+
+        setTimeout(()=>{
+            URL.revokeObjectURL(downloadUrl);
+        },1000);
+
+    }catch(error){
+        alert('Export ไม่สำเร็จ: '+error.message);
+    }finally{
+        exportButton.disabled=false;
+        exportButton.textContent=originalText;
+    }
 };
 document.getElementById('station-button').onclick=(event)=>{stationsVisible=!stationsVisible;if(stationsVisible){stationGroup.addTo(map);event.target.textContent='ซ่อนสถานี';}else{map.removeLayer(stationGroup);event.target.textContent='แสดงสถานี';}};
 map.on('mousemove',e=>{if(!currentData||!currentData.stations.length)return;let nearest=currentData.stations.map(s=>({s,d:(s.latitude-e.latlng.lat)**2+(s.longitude-e.latlng.lng)**2})).sort((a,b)=>a.d-b.d).slice(0,8);let sw=0,sv=0;for(const x of nearest){const w=1/Math.max(x.d,1e-10);sw+=w;sv+=w*x.s.value;}const valueBox = document.getElementById('value-box');
