@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 # Scientific/GIS libraries are imported only when needed.
 # The public home page and /map HTML can therefore start immediately on Render.
@@ -185,6 +185,13 @@ boundary_cache: dict[str, object] = {
 EXPORT_CACHE_SECONDS = 30 * 60
 export_cache_lock = Lock()
 export_cache: dict[str, dict[str, object]] = {}
+
+# ไฟล์ Export ชั่วคราวสำหรับดาวน์โหลดผ่าน URL จริง
+EXPORT_DOWNLOAD_DIR = Path("/tmp/thailand_weather_exports")
+EXPORT_DOWNLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 export_source_cache_lock = Lock()
 export_source_cache: dict[str, object] = {
@@ -2112,6 +2119,144 @@ def export_publication_map(
         ) from error
 
 
+
+@app.get(
+    "/export/prepare",
+)
+def prepare_publication_download(
+    layer: str = Query(
+        default="tmin"
+    ),
+) -> JSONResponse:
+    """
+    สร้างไฟล์ PNG บนเซิร์ฟเวอร์ แล้วคืน URL ดาวน์โหลดจริง
+    เพื่อรองรับเบราว์เซอร์บนมือถือ
+    """
+
+    try:
+        current_time = time.time()
+        cached_item = export_cache.get(layer)
+
+        if (
+            cached_item is not None
+            and current_time
+            - float(cached_item["created_at"])
+            < EXPORT_CACHE_SECONDS
+        ):
+            image_bytes = cached_item["image_bytes"]
+            original_file_name = str(
+                cached_item["file_name"]
+            )
+
+        else:
+            with export_cache_lock:
+                current_time = time.time()
+                cached_item = export_cache.get(layer)
+
+                if (
+                    cached_item is not None
+                    and current_time
+                    - float(cached_item["created_at"])
+                    < EXPORT_CACHE_SECONDS
+                ):
+                    image_bytes = cached_item["image_bytes"]
+                    original_file_name = str(
+                        cached_item["file_name"]
+                    )
+
+                else:
+                    image_buffer, original_file_name = (
+                        create_publication_map(
+                            layer_key=layer
+                        )
+                    )
+                    image_bytes = image_buffer.getvalue()
+
+                    export_cache[layer] = {
+                        "created_at": time.time(),
+                        "image_bytes": image_bytes,
+                        "file_name": original_file_name,
+                    }
+
+        download_file_name = (
+            f"{time.time_ns()}_"
+            f"{Path(original_file_name).name}"
+        )
+
+        download_path = (
+            EXPORT_DOWNLOAD_DIR
+            / download_file_name
+        )
+
+        download_path.write_bytes(
+            image_bytes
+        )
+
+        return JSONResponse(
+            {
+                "download_url": (
+                    "/download/"
+                    + download_file_name
+                ),
+                "file_name": original_file_name,
+            }
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        ) from error
+
+
+@app.get(
+    "/download/{file_name}",
+)
+def download_publication_file(
+    file_name: str,
+) -> FileResponse:
+    """
+    ดาวน์โหลด PNG ผ่าน URL จริง
+    """
+
+    safe_file_name = Path(
+        file_name
+    ).name
+
+    if (
+        safe_file_name != file_name
+        or not safe_file_name.lower().endswith(
+            ".png"
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="ชื่อไฟล์ไม่ถูกต้อง",
+        )
+
+    file_path = (
+        EXPORT_DOWNLOAD_DIR
+        / safe_file_name
+    )
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="ไม่พบไฟล์ดาวน์โหลด",
+        )
+
+    original_file_name = safe_file_name.split(
+        "_",
+        1,
+    )[-1]
+
+    return FileResponse(
+        path=file_path,
+        media_type="image/png",
+        filename=original_file_name,
+    )
+
+
 # =========================================================
 # 10. ค้นหาสถานที่ผ่าน Nominatim
 # =========================================================
@@ -2768,54 +2913,30 @@ document.getElementById('export-button').onclick=async(event)=>{
 
     try{
         const key=document.getElementById('layer-select').value;
+
         const response=await fetch(
-            '/export/publication?layer='+encodeURIComponent(key)
+            '/export/prepare?layer='+encodeURIComponent(key)
         );
+
+        const result=await response.json();
 
         if(!response.ok){
-            let errorMessage='ไม่สามารถสร้างแผนที่ได้';
-            try{
-                const errorData=await response.json();
-                if(errorData.detail){
-                    errorMessage=errorData.detail;
-                }
-            }catch(error){
-                // ใช้ข้อความเริ่มต้น หาก Response ไม่ใช่ JSON
-            }
-            throw new Error(errorMessage);
+            throw new Error(
+                result.detail||'ไม่สามารถสร้างแผนที่ได้'
+            );
         }
 
-        const blob=await response.blob();
-        const contentDisposition=response.headers.get(
-            'Content-Disposition'
-        );
+        exportButton.textContent='กำลังดาวน์โหลด...';
 
-        let fileName='Thailand_Publication_Map.png';
-        const fileNameMatch=contentDisposition
-            ? contentDisposition.match(/filename="?([^";]+)"?/i)
-            : null;
-
-        if(fileNameMatch&&fileNameMatch[1]){
-            fileName=fileNameMatch[1];
-        }
-
-        const downloadUrl=URL.createObjectURL(blob);
-        const downloadLink=document.createElement('a');
-        downloadLink.href=downloadUrl;
-        downloadLink.download=fileName;
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
-
-        setTimeout(()=>{
-            URL.revokeObjectURL(downloadUrl);
-        },1000);
+        window.location.href=result.download_url;
 
     }catch(error){
         alert('Export ไม่สำเร็จ: '+error.message);
     }finally{
-        exportButton.disabled=false;
-        exportButton.textContent=originalText;
+        setTimeout(()=>{
+            exportButton.disabled=false;
+            exportButton.textContent=originalText;
+        },1000);
     }
 };
 document.getElementById('station-button').onclick=(event)=>{stationsVisible=!stationsVisible;if(stationsVisible){stationGroup.addTo(map);event.target.textContent='ซ่อนสถานี';}else{map.removeLayer(stationGroup);event.target.textContent='แสดงสถานี';}};
